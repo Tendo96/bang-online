@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bang! Online</title>
+</head>
+<body>
+    <h1>Bang! Online</h1>
+    
+    <div id="login-screen">
+        <input type="text" id="username" placeholder="Введи имя ковбоя...">
+        <button onclick="join()">Войти в салун</button>
+    </div>
+
+    <div id="game-lobby" style="display:none;">
+        <h3>Игроки в салуне:</h3>
+        <ul id="player-list"></ul>
+        <p>Нужно минимум 4 игрока для начала...</p>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        function join() {
+            const name = document.getElementById('username').value;
+            if (name) {
+                socket.emit('joinGame', name);
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('game-lobby').style.display = 'block';
+            }
+        }
+
+        socket.on('updatePlayerList', (players) => {
+            const list = document.getElementById('player-list');
+            list.innerHTML = players.map(p => `<li>🤠 ${p.name}</li>`).join('');
+        });
+    </script>
+</body>
+</html>
