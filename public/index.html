@@ -15,6 +15,7 @@
         <h3>Игроки в салуне:</h3>
         <ul id="player-list"></ul>
         <p>Нужно минимум 4 игрока для начала...</p>
+        <button id="start-btn" style="display:none;" onclick="startGame()">Начать игру</button>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -33,6 +34,27 @@
         socket.on('updatePlayerList', (players) => {
             const list = document.getElementById('player-list');
             list.innerHTML = players.map(p => `<li>🤠 ${p.name}</li>`).join('');
+
+            const startBtn = document.getElementById('start-btn');
+
+            if (players.length >= 2 && players[0].id === socket.id) {
+                startBtn.style.display = 'block';
+            } else {
+                startBtn.style.display = 'none';
+            }
+        });
+        
+        function startGame(){
+            socket.emit('requestStartGame');
+        }
+
+        socket.on('gameStarted', (data) => {
+            const lobby = document.getElementById('game-lobby');
+            lobby.innerHTML = `<h2>Игра началась!</h2>
+                            <p>Твоя роль: <strong>${data.role}</strong></p>
+                            <p>Твое здоровье: ❤️ ${data.hp}</p>
+                            <hr>
+                            <p>Ожидаем раздачи карт...</p>`;
         });
     </script>
 </body>
