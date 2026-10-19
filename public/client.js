@@ -1,56 +1,78 @@
-const socket = io();
+// Постоянный токен браузера — по нему сервер узнаёт игрока после обновления страницы
+const token = localStorage.getItem('bangToken') || (() => {
+    const t = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('bangToken', t);
+    return t;
+})();
+const socket = io({ auth: { token } });
+
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+let myId = null;     // публичный id игрока (приходит с сервера)
 let S = null;        // последнее состояние игры
 let sel = null;      // выбранная карта, которой нужна цель
 let pickFor = null;  // {card, target} для «Паники» и «Красотки»
 let inGame = false;
 
-const show = id => ['login', 'lobby', 'game'].forEach(s => { $(s).hidden = s !== id; });
+const show = id => ['login', 'menu', 'lobby', 'game'].forEach(s => { $(s).hidden = s !== id; });
 function toast(m) {
     const t = $('toast'); t.textContent = m; t.hidden = false;
     clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200);
 }
 function btn(text, fn) { const b = document.createElement('button'); b.textContent = text; b.onclick = fn; return b; }
 
-// ---------- лобби ----------
-const join = () => { const n = $('username').value.trim(); if (n) socket.emit('joinGame', n); };
-$('join-btn').onclick = join;
-$('username').onkeydown = e => { if (e.key === 'Enter') join(); };
+// ---------- вход, меню, лобби ----------
+$('username').value = localStorage.getItem('bangName') || '';
+const login = () => {
+    const n = $('username').value.trim();
+    if (n) { localStorage.setItem('bangName', n); socket.emit('setName', n); }
+};
+$('join-btn').onclick = login;
+$('username').onkeydown = e => { if (e.key === 'Enter') login(); };
+$('create-btn').onclick = () => socket.emit('createRoom');
+const enter = () => socket.emit('joinRoom', $('code-input').value);
+$('enter-btn').onclick = enter;
+$('code-input').onkeydown = e => { if (e.key === 'Enter') enter(); };
 $('start-btn').onclick = () => socket.emit('requestStartGame');
+$('leave-btn').onclick = () => socket.emit('leaveRoom');
 $('again-btn').onclick = () => socket.emit('backToLobby');
 $('end-btn').onclick = () => socket.emit('endTurn');
 $('take-btn').onclick = () => socket.emit('respond', { cardId: null });
 
 socket.on('errorMsg', toast);
-socket.on('toLobby', () => { inGame = false; S = null; sel = null; pickFor = null; });
-socket.on('lobby', d => {
-    if (inGame) return;
-    if (d.players.some(p => p.id === socket.id)) {
-        show('lobby');
-        $('player-list').innerHTML = d.players.map(p => `<li>🤠 ${esc(p.name)}</li>`).join('');
-        const host = d.players[0].id === socket.id;
-        $('start-btn').hidden = !(host && d.players.length >= d.min);
-        $('lobby-hint').textContent = d.players.length < d.min
-            ? `Ждём игроков: нужно минимум ${d.min}`
-            : host ? 'Можно начинать' : 'Ждём, пока хозяин салуна начнёт игру';
-    } else {
-        show('login');
-        $('login-note').textContent = d.inGame ? 'Партия уже идёт — дождитесь её конца' : '';
-    }
+socket.on('disconnect', () => toast('Связь потеряна, переподключаемся…'));
+socket.on('noSession', () => { myId = null; inGame = false; S = null; show('login'); });
+socket.on('session', d => {
+    myId = d.pid;
+    $('hello').textContent = d.name;
+    if (!$('login').hidden) show('menu');
+});
+socket.on('left', () => { inGame = false; S = null; show('menu'); });
+socket.on('room', d => {
+    if (d.inGame) return;   // дальше работает событие state
+    inGame = false; S = null; sel = null; pickFor = null;
+    show('lobby');
+    $('room-code').textContent = d.code;
+    $('player-list').innerHTML = d.members
+        .map(m => `<li>🤠 ${esc(m.name)}${m.online ? '' : ' <span class="off">(нет связи)</span>'}</li>`).join('');
+    const host = d.host === myId, ready = d.members.filter(m => m.online).length;
+    $('start-btn').hidden = !(host && ready >= d.min);
+    $('lobby-hint').textContent = ready < d.min
+        ? `Ждём игроков: нужно минимум ${d.min}`
+        : host ? 'Можно начинать' : 'Ждём, пока хозяин салуна начнёт игру';
 });
 
 // ---------- игра ----------
 socket.on('state', s => {
     inGame = true; S = s;
-    if (sel && (s.turn !== socket.id || s.pending || !s.me.hand.some(c => c.id === sel.id))) sel = null;
-    if (!s.me.hand.length || s.turn !== socket.id) pickFor = null;
+    if (sel && (s.turn !== myId || s.pending || !s.me.hand.some(c => c.id === sel.id))) sel = null;
+    if (s.turn !== myId || s.pending) pickFor = null;
     show('game'); render();
 });
 
 function validTarget(p) {
-    if (!sel || !p.alive || p.id === socket.id) return false;
+    if (!sel || !p.alive || p.id === myId) return false;
     if (sel.key === 'BANG') return p.dist <= S.range;
     if (sel.key === 'PANIC') return p.dist <= 1;
     if (sel.key === 'PRISON') return p.role !== 'Шериф';
@@ -73,8 +95,8 @@ function doPick(pick) {
 function onCard(c) {
     if (S.winner) return;
     const pd = S.pending;
-    if (pd) { if (pd.cur === socket.id && pd.need === c.key) socket.emit('respond', { cardId: c.id }); return; }
-    if (S.turn !== socket.id) return;
+    if (pd) { if (pd.cur === myId && pd.need === c.key) socket.emit('respond', { cardId: c.id }); return; }
+    if (S.turn !== myId) return;
     if (S.phase === 'discard') return socket.emit('discardCard', { cardId: c.id });
     if (c.target) { sel = sel && sel.id === c.id ? null : c; pickFor = null; return render(); }
     socket.emit('playCard', { cardId: c.id });
@@ -83,7 +105,7 @@ function onCard(c) {
 const nameOf = id => (S.players.find(p => p.id === id) || {}).name || '?';
 
 function promptText() {
-    const s = S, pd = s.pending, myId = socket.id;
+    const s = S, pd = s.pending;
     if (s.winner) return `🏆 Победа: ${s.winner}`;
     if (pd) {
         const mine = pd.cur === myId;
@@ -101,27 +123,30 @@ function promptText() {
     return 'Ваш ход — играйте карты';
 }
 
-function cardHTML(c, extra = '') {
-    return `<div class="ic">${c.icon}</div><div class="nm">${esc(c.name)}</div><div class="sr">${esc(c.rank)}${c.suit}</div>`;
-}
+const cardHTML = c => `<div class="ic">${c.icon}</div><div class="nm">${esc(c.name)}</div><div class="sr">${esc(c.rank)}${c.suit}</div>`;
 
 function render() {
-    const s = S, myId = socket.id, myTurn = s.turn === myId && !s.pending && s.phase === 'play';
+    const s = S, myTurn = s.turn === myId && !s.pending && s.phase === 'play';
 
-    $('players').innerHTML = s.players.map(p => `
-        <div class="seat ${p.alive ? '' : 'dead'} ${p.id === s.turn ? 'turn' : ''} ${p.id === myId ? 'me' : ''} ${sel && validTarget(p) ? 'target' : ''}" data-id="${esc(p.id)}" ${sel && validTarget(p) ? 'tabindex="0"' : ''}>
+    $('players').innerHTML = s.players.map(p => {
+        const target = sel && validTarget(p);
+        return `<div class="seat ${p.alive ? '' : 'dead'} ${p.id === s.turn ? 'turn' : ''} ${p.id === myId ? 'me' : ''} ${target ? 'target' : ''}" data-id="${esc(p.id)}" ${target ? 'tabindex="0"' : ''}>
             <div class="nm">${esc(p.name)}${p.id === myId ? ' (вы)' : ''}</div>
             <div class="role">${p.role ? esc(p.role) : '❓ скрыто'}</div>
+            <div title="${esc(p.char.desc)}" style="font-style:italic;font-size:.9rem">${esc(p.char.name)}</div>
             <div>${'❤️'.repeat(p.hp)}${'🖤'.repeat(Math.max(0, p.maxHp - p.hp))}</div>
             <div>🃏 ${p.handCount}${p.dist ? ` · 📏 ${p.dist}` : ''}</div>
             <div class="tbl">${p.table.map(c => `<span title="${esc(c.name)}">${c.icon}</span>`).join('')}</div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
     document.querySelectorAll('.seat').forEach(el => {
         el.onclick = () => onSeat(el.dataset.id);
         el.onkeydown = e => { if (e.key === 'Enter') onSeat(el.dataset.id); };
     });
 
     $('prompt').textContent = promptText();
+    const mc = s.players.find(p => p.id === myId);
+    $('char-info').textContent = mc ? `${mc.char.name}: ${mc.char.desc}` : '';
     $('end-btn').hidden = !myTurn;
     $('take-btn').hidden = !(s.pending && s.pending.cur === myId && s.pending.type !== 'store');
     $('again-btn').hidden = !s.winner;

@@ -1,0 +1,6 @@
+.room-code { font-family: Rye, Georgia, serif; font-size: 3rem; letter-spacing: .3em; color: var(--brass); margin: 0; padding-left: .3em; }
+.off { opacity: .6; font-size: .85em; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; min-width: 0; text-transform: uppercase; }
+.ghost { background: transparent; }
+.ghost:hover { background: #4a2e1a; }

@@ -1,5 +1,6 @@
 'use strict';
 const { rolesPool, createDeck, shuffle, isExplosion } = require('./gameLogic');
+const { CHARACTERS, CHAR } = require('./characters');
 
 const ok = { ok: true };
 const fail = err => ({ ok: false, err });
@@ -15,9 +16,10 @@ class Game {
         this.bangUsed = false;
 
         const roles = shuffle([...rolesPool[list.length]]);
+        const chars = shuffle([...CHARACTERS]);
         this.players = list.map((p, i) => {
-            const maxHp = roles[i] === 'Шериф' ? 5 : 4;
-            return { id: p.id, name: p.name, role: roles[i], hp: maxHp, maxHp, hand: [], table: [], alive: true };
+            const maxHp = chars[i].hp + (roles[i] === 'Шериф' ? 1 : 0);
+            return { id: p.id, name: p.name, role: roles[i], char: chars[i].key, hp: maxHp, maxHp, hand: [], table: [], alive: true };
         });
         this.players.forEach(p => p.hand.push(...this.draw(p.hp)));
         this.turn = this.players.findIndex(p => p.role === 'Шериф');
@@ -64,15 +66,32 @@ class Game {
         const d = Math.abs(i - j);
         let r = Math.min(d, al.length - d);
         if (this.has(b, 'MUSTANG')) r++;
+        if (b.char === 'PAUL') r++;
         if (this.has(a, 'SCOPE')) r--;
+        if (a.char === 'ROSE') r--;
         return Math.max(1, r);
     }
 
-    tryBarrel(t) {
-        if (!this.has(t, 'BARREL')) return false;
-        const f = this.flip(), hit = f.suit === '♥';
-        this.say(`${t.name} проверяет бочку: ${f.rank}${f.suit} — ${hit ? 'выстрел мимо!' : 'не повезло'}`);
-        return hit;
+    // Сколько «промахов» дала бочка (и встроенная бочка Журдонне); останавливается, когда набрано need
+    tryBarrel(t, need = 1) {
+        const tries = (this.has(t, 'BARREL') ? 1 : 0) + (t.char === 'JOURDONNAIS' ? 1 : 0);
+        let hits = 0;
+        for (let i = 0; i < tries && hits < need; i++) {
+            const f = this.flip(), hit = f.suit === '♥';
+            this.say(`${t.name} проверяет бочку: ${f.rank}${f.suit} — ${hit ? 'выстрел мимо!' : 'не повезло'}`);
+            if (hit) hits++;
+        }
+        return hits;
+    }
+
+    // Сьюзи Лафайетт берёт карту, как только рука опустела
+    suzy() {
+        this.alive().forEach(p => {
+            if (p.char === 'SUZY' && !p.hand.length) {
+                p.hand.push(...this.draw(1));
+                this.say(`${p.name} берёт карту — рука опустела`);
+            }
+        });
     }
 
     // ---------- ход ----------
@@ -108,7 +127,12 @@ class Game {
             else { this.say(`${p.name} остаётся в тюрьме (${f.rank}${f.suit}) и пропускает ход`); return this.nextTurn(); }
         }
 
-        p.hand.push(...this.draw(2));
+        const cards = this.draw(2);
+        p.hand.push(...cards);
+        if (p.char === 'BLACKJACK' && cards[1]) {
+            this.say(`${p.name} показывает вторую карту: ${cards[1].rank}${cards[1].suit}`);
+            if (cards[1].suit === '♥' || cards[1].suit === '♦') p.hand.push(...this.draw(1));
+        }
     }
 
     nextTurn() {
@@ -135,13 +159,30 @@ class Game {
             this.say(`${p.name} выпивает пиво и остаётся в игре 🍺`);
         }
         if (p.hp <= 0) this.kill(p, src);
+        else {
+            if (p.char === 'BART') {
+                p.hand.push(...this.draw(n));
+                this.say(`${p.name} берёт ${n} карт за полученный урон`);
+            }
+            if (p.char === 'GRINGO' && src && src !== p) {
+                for (let i = 0; i < n && src.hand.length; i++) {
+                    p.hand.push(src.hand.splice(Math.floor(Math.random() * src.hand.length), 1)[0]);
+                    this.say(`${p.name} забирает карту у ${src.name}`);
+                }
+            }
+        }
+        this.suzy();
     }
 
     kill(p, src) {
         p.alive = false;
         p.hp = 0;
         this.say(`💀 ${p.name} выбывает. Роль: ${p.role}`);
-        this.discard.push(...p.hand, ...p.table);
+        const sam = this.alive().find(x => x.char === 'SAM');
+        if (sam) {
+            sam.hand.push(...p.hand, ...p.table);
+            this.say(`${sam.name} забирает все карты выбывшего`);
+        } else this.discard.push(...p.hand, ...p.table);
         p.hand = []; p.table = [];
         if (src && src !== p && src.alive) {
             if (p.role === 'Бандит') {
@@ -177,21 +218,27 @@ class Game {
         const c = p.hand.find(x => x.id === cardId);
         if (!c) return fail('Нет такой карты');
 
+        // Каламити Джанет играет «Мимо!» как «Бэнг!»
+        const k = (c.key === 'MISSED' && p.char === 'CALAMITY') ? 'BANG' : c.key;
+        const needTarget = k === 'BANG' ? 'range' : c.target;
         const t = targetId ? this.byId(targetId) : null;
-        if (c.target && (!t || !t.alive || t === p)) return fail('Выберите цель');
+        if (needTarget && (!t || !t.alive || t === p)) return fail('Выберите цель');
         const take = () => { p.hand.splice(p.hand.indexOf(c), 1); };
 
-        switch (c.key) {
+        switch (k) {
             case 'MISSED':
                 return fail('«Мимо!» играется только в ответ на выстрел');
 
-            case 'BANG':
-                if (this.bangUsed && !this.has(p, 'VOLCANIC')) return fail('Только один «Бэнг!» за ход');
+            case 'BANG': {
+                if (this.bangUsed && !this.has(p, 'VOLCANIC') && p.char !== 'WILLY') return fail('Только один «Бэнг!» за ход');
                 if (this.dist(p, t) > this.range(p)) return fail('Цель вне дальности');
                 take(); this.drop(c); this.bangUsed = true;
                 this.say(`${p.name} стреляет в ${t.name}`);
-                if (!this.tryBarrel(t)) this.pending = { type: 'bang', from: p.id, cur: t.id };
+                const need = p.char === 'SLAB' ? 2 : 1;
+                const left = need - this.tryBarrel(t, need);
+                if (left > 0) this.pending = { type: 'bang', from: p.id, cur: t.id, needs: left };
                 break;
+            }
 
             case 'BEER':
                 if (this.alive().length <= 2) return fail('Пиво не действует, когда осталось двое');
@@ -208,7 +255,7 @@ class Game {
 
             case 'STAGECOACH':
             case 'WELLS_FARGO': {
-                const n = c.key === 'STAGECOACH' ? 2 : 3;
+                const n = k === 'STAGECOACH' ? 2 : 3;
                 take(); this.drop(c); p.hand.push(...this.draw(n));
                 this.say(`${p.name} берёт ${n} карты (${c.name})`);
                 break;
@@ -216,14 +263,14 @@ class Game {
 
             case 'CAT_BALOU':
             case 'PANIC': {
-                if (c.key === 'PANIC' && this.dist(p, t) > 1) return fail('«Паника!» работает только на расстоянии 1');
+                if (k === 'PANIC' && this.dist(p, t) > 1) return fail('«Паника!» работает только на расстоянии 1');
                 if (pickId === 'hand') { if (!t.hand.length) return fail('У цели нет карт в руке'); }
                 else if (!t.table.some(x => x.id === pickId)) return fail('Выберите карту');
                 take(); this.drop(c);
                 const src = pickId === 'hand' ? t.hand : t.table;
                 const idx = pickId === 'hand' ? Math.floor(Math.random() * src.length) : src.findIndex(x => x.id === pickId);
                 const card = src.splice(idx, 1)[0];
-                if (c.key === 'PANIC') {
+                if (k === 'PANIC') {
                     p.hand.push(card);
                     this.say(`${p.name} забирает карту у ${t.name}`);
                 } else {
@@ -240,13 +287,12 @@ class Game {
                 break;
 
             case 'INDIANS':
-            case 'GATLING': {
+            case 'GATLING':
                 take(); this.drop(c);
                 this.say(`${p.name}: ${c.name}`);
-                this.pending = { type: c.key === 'INDIANS' ? 'indians' : 'gatling', from: p.id, cur: null, queue: this.others(p).map(x => x.id) };
+                this.pending = { type: k === 'INDIANS' ? 'indians' : 'gatling', from: p.id, cur: null, queue: this.others(p).map(x => x.id) };
                 this.nextInQueue();
                 break;
-            }
 
             case 'GENERAL_STORE': {
                 take(); this.drop(c);
@@ -271,6 +317,7 @@ class Game {
                 take(); p.table.push(c);
                 this.say(`${p.name} выкладывает: ${c.name}`);
         }
+        this.suzy();
         return ok;
     }
 
@@ -295,16 +342,18 @@ class Game {
         if (!pd || pd.type === 'store' || pd.cur !== pid) return fail('Сейчас от вас не требуется ответ');
         const p = this.byId(pid);
         const need = (pd.type === 'bang' || pd.type === 'gatling') ? 'MISSED' : 'BANG';
+        const allowed = p.char === 'CALAMITY' ? ['MISSED', 'BANG'] : [need];
 
         if (cardId) {
             const c = p.hand.find(x => x.id === cardId);
-            if (!c || c.key !== need) return fail('Эта карта не подходит');
+            if (!c || !allowed.includes(c.key)) return fail('Эта карта не подходит');
             p.hand.splice(p.hand.indexOf(c), 1);
             this.drop(c);
             this.say(`${p.name} отвечает: ${c.name}`);
             if (pd.type === 'duel') pd.cur = pd.cur === pd.from ? pd.target : pd.from;
-            else if (pd.type === 'bang') this.pending = null;
+            else if (pd.type === 'bang') { pd.needs = (pd.needs || 1) - 1; if (pd.needs <= 0) this.pending = null; }
             else this.nextInQueue();
+            this.suzy();
             return ok;
         }
 
@@ -354,10 +403,24 @@ class Game {
     viewFor(pid) {
         const me = this.byId(pid);
         const pd = this.pending;
+        const need = !pd || pd.type === 'store' ? null : (pd.type === 'bang' || pd.type === 'gatling') ? 'MISSED' : 'BANG';
+
+        // Каламити Джанет: клиент видит «Бэнг!» и «Мимо!» так, как их сейчас можно сыграть
+        let hand = me.hand;
+        if (me.char === 'CALAMITY') {
+            hand = hand.map(c => {
+                if (c.key !== 'MISSED' && c.key !== 'BANG') return c;
+                if (pd && pd.cur === pid && need) return { ...c, key: need };
+                if (!pd && c.key === 'MISSED') return { ...c, key: 'BANG', target: 'range' };
+                return c;
+            });
+        }
+
         return {
-            me: { id: me.id, hand: me.hand },
+            me: { id: me.id, hand },
             players: this.players.map(p => ({
                 id: p.id, name: p.name, hp: p.hp, maxHp: p.maxHp, alive: p.alive,
+                char: { name: CHAR[p.char].name, desc: CHAR[p.char].desc },
                 handCount: p.hand.length, table: p.table,
                 // Роли скрыты, кроме шерифа, своей, мёртвых и конца игры
                 role: (p.role === 'Шериф' || p.id === pid || !p.alive || this.winner) ? p.role : null,
@@ -371,8 +434,7 @@ class Game {
             winner: this.winner,
             log: this.logLines,
             pending: pd && {
-                type: pd.type, from: pd.from, cur: pd.cur, target: pd.target || null,
-                need: pd.type === 'store' ? null : (pd.type === 'bang' || pd.type === 'gatling') ? 'MISSED' : 'BANG',
+                type: pd.type, from: pd.from, cur: pd.cur, target: pd.target || null, need, needs: pd.needs || 1,
                 cards: pd.type === 'store' ? pd.cards : undefined
             }
         };

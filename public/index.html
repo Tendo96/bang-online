@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Rye&family=Alegreya:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="rooms.css">
 </head>
 <body>
     <div id="toast" hidden></div>
@@ -15,15 +16,26 @@
         <h1>Bang!</h1>
         <p class="sub">Салун ждёт стрелков</p>
         <input type="text" id="username" maxlength="16" placeholder="Имя ковбоя" autocomplete="off">
-        <button id="join-btn">Войти в салун</button>
-        <p id="login-note" class="note"></p>
+        <button id="join-btn">Войти в город</button>
+    </main>
+
+    <main id="menu" class="screen" hidden>
+        <h1>Bang!</h1>
+        <p class="sub">Добро пожаловать, <strong id="hello"></strong></p>
+        <button id="create-btn">Открыть свой салун</button>
+        <div class="row">
+            <input type="text" id="code-input" maxlength="4" placeholder="Код салуна" autocomplete="off">
+            <button id="enter-btn">Войти</button>
+        </div>
     </main>
 
     <main id="lobby" class="screen" hidden>
-        <h1>Салун</h1>
+        <p class="sub">Код салуна — назовите его друзьям</p>
+        <p class="room-code" id="room-code"></p>
         <ul id="player-list"></ul>
         <p id="lobby-hint" class="note"></p>
         <button id="start-btn" hidden>Начать игру</button>
+        <button id="leave-btn" class="ghost">Выйти из салуна</button>
     </main>
 
     <div id="game" hidden>
@@ -40,6 +52,7 @@
         </section>
         <section id="hand-wrap">
             <h3>Ваша рука</h3>
+            <p id="char-info" class="note"></p>
             <div id="hand"></div>
         </section>
         <section id="log-wrap">
