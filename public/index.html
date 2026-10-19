@@ -1,61 +1,54 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bang! Online</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rye&family=Alegreya:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>Bang! Online</h1>
-    
-    <div id="login-screen">
-        <input type="text" id="username" placeholder="Введи имя ковбоя...">
-        <button onclick="join()">Войти в салун</button>
-    </div>
+    <div id="toast" hidden></div>
 
-    <div id="game-lobby" style="display:none;">
-        <h3>Игроки в салуне:</h3>
+    <main id="login" class="screen">
+        <h1>Bang!</h1>
+        <p class="sub">Салун ждёт стрелков</p>
+        <input type="text" id="username" maxlength="16" placeholder="Имя ковбоя" autocomplete="off">
+        <button id="join-btn">Войти в салун</button>
+        <p id="login-note" class="note"></p>
+    </main>
+
+    <main id="lobby" class="screen" hidden>
+        <h1>Салун</h1>
         <ul id="player-list"></ul>
-        <p>Нужно минимум 4 игрока для начала...</p>
-        <button id="start-btn" style="display:none;" onclick="startGame()">Начать игру</button>
+        <p id="lobby-hint" class="note"></p>
+        <button id="start-btn" hidden>Начать игру</button>
+    </main>
+
+    <div id="game" hidden>
+        <section id="players"></section>
+        <section id="status">
+            <p id="prompt"></p>
+            <div id="store" hidden></div>
+            <div id="pick" hidden></div>
+            <div class="actions">
+                <button id="take-btn" hidden>Принять урон</button>
+                <button id="end-btn" hidden>Завершить ход</button>
+                <button id="again-btn" hidden>Вернуться в салун</button>
+            </div>
+        </section>
+        <section id="hand-wrap">
+            <h3>Ваша рука</h3>
+            <div id="hand"></div>
+        </section>
+        <section id="log-wrap">
+            <h3>Журнал</h3>
+            <div id="log"></div>
+        </section>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script>
-        const socket = io();
-
-        function join() {
-            const name = document.getElementById('username').value;
-            if (name) {
-                socket.emit('joinGame', name);
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('game-lobby').style.display = 'block';
-            }
-        }
-
-        socket.on('updatePlayerList', (players) => {
-            const list = document.getElementById('player-list');
-            list.innerHTML = players.map(p => `<li>🤠 ${p.name}</li>`).join('');
-
-            const startBtn = document.getElementById('start-btn');
-
-            if (players.length >= 2 && players[0].id === socket.id) {
-                startBtn.style.display = 'block';
-            } else {
-                startBtn.style.display = 'none';
-            }
-        });
-        
-        function startGame(){
-            socket.emit('requestStartGame');
-        }
-
-        socket.on('gameStarted', (data) => {
-            const lobby = document.getElementById('game-lobby');
-            lobby.innerHTML = `<h2>Игра началась!</h2>
-                            <p>Твоя роль: <strong>${data.role}</strong></p>
-                            <p>Твое здоровье: ❤️ ${data.hp}</p>
-                            <hr>
-                            <p>Ожидаем раздачи карт...</p>`;
-        });
-    </script>
+    <script src="client.js"></script>
 </body>
 </html>
